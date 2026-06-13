@@ -678,8 +678,13 @@ option{background:var(--surf2)}
         <span class="sidebar-label">Programme</span>
         <div class="prog-select-row">
           <select class="select-input" id="prog-select" onchange="switchProgramme(parseInt(this.value))"></select>
+          <button class="ico-btn" title="Renommer programme" onclick="renameProgramme()" style="font-size:14px">✏️</button>
           <button class="ico-btn go" title="Nouveau programme" onclick="newProgramme()" style="font-size:18px;font-weight:700">+</button>
           <button class="ico-btn del" title="Supprimer programme" onclick="deleteProgramme()">✕</button>
+        </div>
+        <div style="display:flex;gap:4px;margin-top:2px">
+          <button class="btn sm" style="flex:1;font-size:11px" onclick="moveProgUp()" title="Monter ce programme">↑ Monter</button>
+          <button class="btn sm" style="flex:1;font-size:11px" onclick="moveProgDown()" title="Descendre ce programme">↓ Descendre</button>
         </div>
         <button class="btn primary" style="width:100%;padding:8px" onclick="addProgSession()">+ Nouvelle séance</button>
       </div>
@@ -955,6 +960,8 @@ function loadProgSession(){
   seance=sess.exercices.map(e=>({...cloneExo(e),open:true}));
   document.getElementById('seance-name').value=sess.name;
   renderSeance();renderSeanceBDD();
+  const tabEl=document.querySelector('.tab[onclick*="seance"]');
+  if(tabEl)switchTab('seance',tabEl);
   toast(`Séance "${sess.name}" chargée ✓`);
 }
 
@@ -967,6 +974,8 @@ function loadCarnetSession(){
   seance=sess.exercices.map(e=>({...cloneExo(e),open:true}));
   document.getElementById('seance-name').value=sess.name;
   renderSeance();renderSeanceBDD();
+  const tabEl2=document.querySelector('.tab[onclick*="seance"]');
+  if(tabEl2)switchTab('seance',tabEl2);
   toast(`Séance "${sess.name}" chargée ✓`);
 }
 
@@ -1323,7 +1332,10 @@ function loadCarnetToSeance(id){
   if(seance.length>0&&!confirm('Remplacer la séance en cours dans l\'onglet Séance ?'))return;
   seance=sess.exercices.map(e=>({...cloneExo(e),open:true}));
   document.getElementById('seance-name').value=sess.name;
-  updateSeanceStats();renderSeanceBDD();
+  renderSeance();updateSeanceStats();renderSeanceBDD();
+  // Basculer sur l'onglet Séance
+  const tabEl=document.querySelector('.tab[onclick*="seance"]');
+  if(tabEl)switchTab('seance',tabEl);
   toast(`"${sess.name}" chargée dans Séance`);
 }
 
@@ -1351,6 +1363,31 @@ function deleteProgramme(){
 function switchProgramme(id){
   currentProgId=id;currentProgSessId=null;
   renderProgSessList();renderProgMain();
+}
+
+function renameProgramme(){
+  const prog=getProg();if(!prog)return;
+  const name=prompt('Nouveau nom du programme :',prog.name);
+  if(!name||!name.trim())return;
+  prog.name=name.trim();
+  saveProgs();renderProgSelect();updateLoadSelectors();
+  toast(`Programme renommé en "${prog.name}"`);
+}
+
+function moveProgUp(){
+  const idx=programmes.findIndex(p=>p.id===currentProgId);
+  if(idx<=0)return;
+  [programmes[idx-1],programmes[idx]]=[programmes[idx],programmes[idx-1]];
+  saveProgs();renderProgSelect();updateLoadSelectors();
+  toast('Programme déplacé vers le haut');
+}
+
+function moveProgDown(){
+  const idx=programmes.findIndex(p=>p.id===currentProgId);
+  if(idx<0||idx>=programmes.length-1)return;
+  [programmes[idx+1],programmes[idx]]=[programmes[idx],programmes[idx+1]];
+  saveProgs();renderProgSelect();updateLoadSelectors();
+  toast('Programme déplacé vers le bas');
 }
 
 function addProgSession(){
