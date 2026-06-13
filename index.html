@@ -4,6 +4,11 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Programmator Flow</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Programmator">
+<meta name="theme-color" content="#0f0f0f">
+<link rel="manifest" id="pwa-manifest">
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&display=swap" rel="stylesheet">
 <script type="module">
 // ══════════════════════════════════════════════════
@@ -645,15 +650,17 @@ option{background:var(--surf2)}
       </div>
       <div class="sidebar-scroll" id="carnet-list"></div>
     </div>
-    <div class="main-area" id="carnet-main">
-      <!-- Mobile header -->
+    <div style="display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden">
+      <!-- Mobile header — hors de carnet-main pour ne pas être écrasé -->
       <div class="mobile-header" style="display:none" id="carnet-mob-header">
         <button class="hamburger" onclick="openSidebar('carnet-sidebar')">☰</button>
         <span class="mobile-header-title">Carnet</span>
       </div>
-      <div class="empty">
-        <div class="empty-ico">📓</div>
-        <p>Sauvegarde une séance depuis l'onglet Séance<br>puis sélectionne-la ici.</p>
+      <div class="main-area" id="carnet-main" style="flex:1;min-height:0;overflow-y:auto">
+        <div class="empty">
+          <div class="empty-ico">📓</div>
+          <p>Sauvegarde une séance depuis l'onglet Séance<br>puis sélectionne-la ici.</p>
+        </div>
       </div>
     </div>
   </div>
@@ -1719,7 +1726,6 @@ applyMobileHeaders();
 // TIMER DE REPOS
 // ══════════════════════════════════════════════════
 let _timerInterval = null;
-let _timerRemaining = 0;
 let _timerTotal = 0;
 
 function parseReposSeconds(reposStr) {
@@ -1745,51 +1751,122 @@ function fmtTimer(sec) {
   return m + ':' + String(s).padStart(2, '0');
 }
 
+let _timerEndTs = 0;
+let _notifTimeout = null;
+
 function restTimerStart(seconds) {
   restTimerStop();
   _timerTotal = seconds;
-  _timerRemaining = seconds;
+  _timerEndTs = Date.now() + seconds * 1000;
+  localStorage.setItem('_timerEnd', String(_timerEndTs));
+  localStorage.setItem('_timerTotal', String(_timerTotal));
   const overlay = document.getElementById('rest-timer-overlay');
   const display = document.getElementById('rest-timer-display');
   const bar = document.getElementById('rest-timer-bar');
   overlay.classList.remove('hidden');
-  display.textContent = fmtTimer(_timerRemaining);
+  display.textContent = fmtTimer(seconds);
   bar.style.width = '100%';
   bar.style.transition = 'none';
-  // Vibration de départ
   if (navigator.vibrate) navigator.vibrate(80);
-  _timerInterval = setInterval(() => {
-    _timerRemaining--;
-    display.textContent = fmtTimer(_timerRemaining);
-    bar.style.transition = 'width .9s linear';
-    bar.style.width = Math.max(0, (_timerRemaining / _timerTotal) * 100) + '%';
-    if (_timerRemaining <= 3 && _timerRemaining > 0) {
-      if (navigator.vibrate) navigator.vibrate(40);
-    }
-    if (_timerRemaining <= 0) {
-      restTimerStop();
-      if (navigator.vibrate) navigator.vibrate([100, 80, 100, 80, 200]);
-      // Flash visuel
-      overlay.classList.remove('hidden');
-      display.textContent = 'GO !';
-      document.getElementById('rest-timer-title').textContent = '✅ Cest parti !';
-      setTimeout(() => overlay.classList.add('hidden'), 1800);
-    }
-  }, 1000);
+  scheduleTimerNotification(seconds);
+  _timerInterval = setInterval(_timerTick, 500);
 }
+
+function _timerTick() {
+  const remaining = Math.max(0, Math.round((_timerEndTs - Date.now()) / 1000));
+  const display = document.getElementById('rest-timer-display');
+  const bar = document.getElementById('rest-timer-bar');
+  if (display) {
+    display.textContent = fmtTimer(remaining);
+    if (bar) {
+      bar.style.transition = 'width .4s linear';
+      bar.style.width = Math.max(0, (remaining / _timerTotal) * 100) + '%';
+    }
+  }
+  if (remaining <= 3 && remaining > 0) {
+    if (navigator.vibrate) navigator.vibrate(40);
+  }
+  if (remaining <= 0) {
+    restTimerStop();
+    localStorage.removeItem('_timerEnd');
+    if (navigator.vibrate) navigator.vibrate([100, 80, 100, 80, 200]);
+    const overlay2 = document.getElementById('rest-timer-overlay');
+    const disp = document.getElementById('rest-timer-display');
+    if (overlay2 && disp) {
+      overlay2.classList.remove('hidden');
+      disp.textContent = 'GO !';
+      document.getElementById('rest-timer-title').textContent = 'Repos termine !';
+      setTimeout(() => { overlay2.classList.add('hidden'); document.getElementById('rest-timer-title').textContent = 'Repos'; }, 2500);
+    }
+  }
+}
+
+async function scheduleTimerNotification(seconds) {
+  if (!('Notification' in window)) return;
+  if (Notification.permission === 'default') await Notification.requestPermission();
+  if (Notification.permission !== 'granted') return;
+  if (_notifTimeout) clearTimeout(_notifTimeout);
+  _notifTimeout = setTimeout(() => {
+    new Notification('Programmator Flow', {
+      body: 'Temps de repos termine. Cest parti !',
+      tag: 'rest-timer',
+      requireInteraction: false
+    });
+  }, seconds * 1000);
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible') return;
+  const savedEnd = parseInt(localStorage.getItem('_timerEnd') || '0');
+  const savedTotal = parseInt(localStorage.getItem('_timerTotal') || '0');
+  if (!savedEnd || !savedTotal) return;
+  const remaining = Math.round((savedEnd - Date.now()) / 1000);
+  if (remaining > 0) {
+    _timerEndTs = savedEnd;
+    _timerTotal = savedTotal;
+    const overlay = document.getElementById('rest-timer-overlay');
+    if (overlay) overlay.classList.remove('hidden');
+    if (!_timerInterval) _timerInterval = setInterval(_timerTick, 500);
+    _timerTick();
+  } else {
+    localStorage.removeItem('_timerEnd');
+    if (navigator.vibrate) navigator.vibrate([100, 80, 100, 80, 200]);
+    const overlay = document.getElementById('rest-timer-overlay');
+    const disp = document.getElementById('rest-timer-display');
+    if (overlay && disp) {
+      _timerEndTs = 0;
+      clearInterval(_timerInterval);
+      _timerInterval = null;
+      overlay.classList.remove('hidden');
+      disp.textContent = 'GO !';
+      document.getElementById('rest-timer-title').textContent = 'Repos termine !';
+      setTimeout(() => { overlay.classList.add('hidden'); document.getElementById('rest-timer-title').textContent = 'Repos'; }, 3000);
+    }
+  }
+});
 
 function restTimerStop() {
   clearInterval(_timerInterval);
   _timerInterval = null;
-  document.getElementById('rest-timer-overlay').classList.add('hidden');
-  document.getElementById('rest-timer-title').textContent = '⏱ Repos';
+  if (_notifTimeout) { clearTimeout(_notifTimeout); _notifTimeout = null; }
+  localStorage.removeItem('_timerEnd');
+  const overlay = document.getElementById('rest-timer-overlay');
+  if (overlay) overlay.classList.add('hidden');
+  const title = document.getElementById('rest-timer-title');
+  if (title) title.textContent = 'Repos';
 }
 
 function restTimerAdjust(delta) {
-  _timerRemaining = Math.max(5, _timerRemaining + delta);
-  _timerTotal = Math.max(_timerTotal, _timerRemaining);
-  document.getElementById('rest-timer-display').textContent = fmtTimer(_timerRemaining);
-  document.getElementById('rest-timer-bar').style.width = Math.max(0, (_timerRemaining / _timerTotal) * 100) + '%';
+  _timerEndTs = Math.max(Date.now() + 5000, _timerEndTs + delta * 1000);
+  localStorage.setItem('_timerEnd', String(_timerEndTs));
+  const remaining = Math.round((_timerEndTs - Date.now()) / 1000);
+  _timerTotal = Math.max(_timerTotal, remaining);
+  document.getElementById('rest-timer-display').textContent = fmtTimer(remaining);
+  document.getElementById('rest-timer-bar').style.width = Math.max(0, (remaining / _timerTotal) * 100) + '%';
+  if (_notifTimeout) clearTimeout(_notifTimeout);
+  _notifTimeout = setTimeout(() => {
+    if (Notification.permission === 'granted') new Notification('Programmator Flow', { body: 'Repos termine. Cest parti !', tag: 'rest-timer' });
+  }, remaining * 1000);
 }
 
 function setDone(mode, idx, si, btn) {
@@ -2007,5 +2084,29 @@ window._onFirebaseSync = function() {
     <button class="rest-timer-btn skip" onclick="restTimerStop()">Passer ✕</button>
   </div>
 </div>
+<script>
+(function() {
+  // Manifest PWA
+  const manifest = {
+    name: "Programmator Flow",
+    short_name: "Programmator",
+    start_url: "./",
+    display: "standalone",
+    background_color: "#0f0f0f",
+    theme_color: "#0f0f0f",
+    icons: [{src:"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%230f0f0f'/%3E%3Ctext y='44' x='10' font-size='40'%3E🏋️%3C/text%3E%3C/svg%3E", sizes:"64x64", type:"image/svg+xml"}]
+  };
+  const blob = new Blob([JSON.stringify(manifest)], {type:'application/json'});
+  const el = document.getElementById('pwa-manifest');
+  if (el) el.href = URL.createObjectURL(blob);
+
+  // Demander permission notif au premier tap
+  document.addEventListener('click', function() {
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+  }, {once: true});
+})();
+</script>
 </body>
 </html>
