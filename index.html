@@ -586,7 +586,7 @@ option{background:var(--surf2)}
       </div>
       <!-- Topbar -->
       <div class="seance-topbar">
-        <input class="seance-name-inp" id="seance-name" type="text" placeholder="NOM DE LA SÉANCE…">
+        <input class="seance-name-inp" id="seance-name" type="text" placeholder="NOM DE LA SÉANCE…" oninput="scheduleDraft()">
         <span class="date-badge" id="today-date"></span>
         <div style="flex:1"></div>
         <button class="btn danger" onclick="clearSeance()">Vider</button>
@@ -820,6 +820,19 @@ const esc=s=>s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').r
 // STATE
 // ══════════════════════════════════════════════════
 let seance=[]; // current active session
+// Restaurer la séance en cours si non sauvegardée
+(function(){
+  try {
+    const draft = localStorage.getItem('qpp_draft_seance');
+    const draftName = localStorage.getItem('qpp_draft_name');
+    const draftNotes = localStorage.getItem('qpp_draft_notes');
+    if(draft) {
+      seance = JSON.parse(draft);
+      if(draftName) setTimeout(()=>{ const el=document.getElementById('seance-name'); if(el)el.value=draftName; },100);
+      if(draftNotes) setTimeout(()=>{ const el=document.getElementById('seance-notes'); if(el)el.value=draftNotes; },100);
+    }
+  } catch(e) {}
+})();
 let bddFilter=null;
 let modalFilter=null;
 let modalTarget=null; // 'seance' | prog session id
@@ -984,8 +997,8 @@ function loadCarnetSession(){
 // ══════════════════════════════════════════════════
 function addToSeance(exo){
   if(seance.some(s=>s.nom===exo.nom))return;
-  seance.push({nom:exo.nom,muscle:exo.muscle,repos:exo.repos,commentaires:exo.commentaires,sets:[mkSet()],open:true});
-  renderSeance();renderSeanceBDD();
+  seance.push({nom:exo.nom,muscle:exo.muscle,repos:exo.repos,commentaires:exo.commentaires,repsMin:exo.repsMin||'',repsMax:exo.repsMax||'',sets:[mkSet()],open:true});
+  renderSeance();renderSeanceBDD();scheduleDraft();
 }
 
 function renderSeance(){
@@ -1079,7 +1092,7 @@ function getExoArr(mode){
 function onSetInput(mode,idx,si,key,val){
   const arr=getExoArr(mode);if(!arr)return;
   arr[idx].sets[si][key]=val;
-  if(mode==='seance')updateSeanceStats();
+  if(mode==='seance'){updateSeanceStats();scheduleDraft();}
   else saveProgs();
 }
 
@@ -1153,7 +1166,28 @@ function clearSeance(){
   if(!confirm('Vider la séance en cours ?'))return;
   seance=[];
   document.getElementById('seance-name').value='';
+  localStorage.removeItem('qpp_draft_seance');
+  localStorage.removeItem('qpp_draft_name');
+  localStorage.removeItem('qpp_draft_notes');
   renderSeance();renderSeanceBDD();
+}
+
+function saveDraft(){
+  if(!seance.length){ localStorage.removeItem('qpp_draft_seance'); return; }
+  try {
+    localStorage.setItem('qpp_draft_seance', JSON.stringify(seance));
+    const name = document.getElementById('seance-name');
+    const notes = document.getElementById('seance-notes');
+    if(name) localStorage.setItem('qpp_draft_name', name.value);
+    if(notes) localStorage.setItem('qpp_draft_notes', notes.value);
+    showSyncBadge('✓ Brouillon sauvegardé');
+  } catch(e) {}
+}
+
+let _draftTimer = null;
+function scheduleDraft(){
+  clearTimeout(_draftTimer);
+  _draftTimer = setTimeout(saveDraft, 2000);
 }
 
 function saveToCarnet(){
@@ -1162,12 +1196,16 @@ function saveToCarnet(){
   const notes=document.getElementById('seance-notes').value.trim();
   const session={
     id:Date.now(),name,date:todayISO(),notes,
-    exercices:seance.map(e=>({nom:e.nom,muscle:e.muscle,repos:e.repos,sets:e.sets.map(s=>({...s}))}))
+    exercices:seance.map(e=>({nom:e.nom,muscle:e.muscle,repos:e.repos,repsMin:e.repsMin,repsMax:e.repsMax,sets:e.sets.map(s=>({...s}))}))
   };
   sessions.unshift(session);
   saveSessions();
   updateLoadSelectors();
   document.getElementById('seance-notes').value='';
+  // Effacer le brouillon après sauvegarde réelle
+  localStorage.removeItem('qpp_draft_seance');
+  localStorage.removeItem('qpp_draft_name');
+  localStorage.removeItem('qpp_draft_notes');
   toast(`✅ "${name}" sauvegardée dans le carnet`);
 }
 
@@ -1796,6 +1834,8 @@ if(currentProgId&&getProg()){
   if(p.sessions.length)currentProgSessId=p.sessions[0].id;
 }
 applyMobileHeaders();
+// Rendre la séance restaurée depuis le brouillon
+if(seance.length){ setTimeout(()=>{ renderSeance(); updateSeanceStats(); renderSeanceBDD(); toast('Séance en cours restaurée 📋'); }, 300); }
 
 // ══════════════════════════════════════════════════
 // TIMER DE REPOS
