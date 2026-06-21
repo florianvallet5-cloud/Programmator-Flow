@@ -1055,7 +1055,7 @@ function renderSets(mode,idx,cardEl){
   const exo=mode==='seance'?seance[idx]:getProgSess()?.exercices[idx];
   if(!exo)return;
   tbody.innerHTML='';
-  const repsHint=mode==='prog'&&(exo.repsMin||exo.repsMax)?`${exo.repsMin||'?'}–${exo.repsMax||'?'}`:undefined;
+  const repsHint=(exo.repsMin||exo.repsMax)?`${exo.repsMin||'?'}–${exo.repsMax||'?'}`:undefined;
   exo.sets.forEach((set,si)=>{
     const tr=document.createElement('tr');
     tr.innerHTML=`
@@ -1244,6 +1244,40 @@ function renderCarnetSession(session){
     </div>`;
   }).join('');
 
+  // Chercher la séance précédente avec le même nom
+  const prevSess = sessions.filter(s=>s.id!==session.id&&s.name===session.name)
+    .sort((a,b)=>b.date.localeCompare(a.date))[0];
+
+  // Tonnage par muscle pour cette séance et la précédente
+  const tonnageCurr={}, tonnagePrev={};
+  session.exercices.forEach(e=>e.sets.forEach(s=>{
+    tonnageCurr[e.muscle]=(tonnageCurr[e.muscle]||0)+(parseFloat(s.reps)||0)*(parseFloat(s.charge)||0);
+  }));
+  if(prevSess){prevSess.exercices.forEach(e=>e.sets.forEach(s=>{
+    tonnagePrev[e.muscle]=(tonnagePrev[e.muscle]||0)+(parseFloat(s.reps)||0)*(parseFloat(s.charge)||0);
+  }));}
+
+  const musclesInSeance=Object.keys(tonnageCurr).sort();
+  const hasTonnage=Object.values(tonnageCurr).some(v=>v>0);
+  const tonnageBlock=hasTonnage&&musclesInSeance.length?`
+    <div class="bilan-header" style="margin:8px 0 6px">⚖️ Tonnage vs séance précédente${prevSess?' ('+fmtDate(prevSess.date)+')':' (aucune)'}</div>
+    <div style="display:flex;flex-direction:column;gap:5px">
+    ${musclesInSeance.map(m=>{
+      const curr=Math.round(tonnageCurr[m]||0);
+      const prev=Math.round(tonnagePrev[m]||0);
+      const delta=curr-prev;
+      const pct=prev>0?Math.round(delta/prev*100):null;
+      const col=delta>0?'var(--acc)':delta<0?'#ff6b6b':'var(--muted)';
+      const arrow=delta>0?'↑':delta<0?'↓':'=';
+      return '<div style="display:flex;align-items:center;gap:6px;font-size:12px">'+
+        '<span style="color:'+mc(m)+';width:90px;flex-shrink:0;font-size:11px">'+mLabel(m)+'</span>'+
+        '<span style="color:var(--text);font-weight:600">'+(curr>0?curr+'kg':'—')+'</span>'+
+        (prev>0?'<span style="color:'+col+';font-size:11px">'+arrow+' '+Math.abs(delta)+'kg'+(pct!==null?' ('+pct+'%)':'')+'</span>':'')+
+        (prev>0?' <span style="color:var(--muted2);font-size:10px">vs '+prev+'kg</span>':'')+
+      '</div>';
+    }).join('')}
+    </div>`:'';
+
   wrap.innerHTML=`
     <div class="session-header">
       <div><h2>${esc(session.name)}</h2><div class="session-date">📅 ${fmtDate(session.date)}</div></div>
@@ -1254,6 +1288,7 @@ function renderCarnetSession(session){
       </div>
     </div>
     ${session.notes?`<div class="carnet-notes-block">📝 ${esc(session.notes)}</div>`:''}
+    ${tonnageBlock}
     <div class="session-summary">
       <div class="sum-card"><div class="sum-val">${session.exercices.length}</div><div class="sum-lbl">Exercices</div></div>
       <div class="sum-card"><div class="sum-val">${totalSets}</div><div class="sum-lbl">Séries</div></div>
@@ -1269,26 +1304,29 @@ function renderCarnetSession(session){
     const history=getExoHistory(exo.nom,session.id);
     const isPR=history.length>0&&maxCharge>0&&maxCharge>=Math.max(...history.map(h=>h.maxCharge));
     let chartHTML='';
-    if(history.length>1){
+    if(history.length>=1){
       const vals=history.map(h=>h.maxCharge);
-      const maxV=Math.max(...vals)||1;const minV=Math.min(...vals.filter(v=>v>0))||0;
+      const maxV=Math.max(...vals,maxCharge)||1;
+      const allPts=[...history,{date:'Actuel',maxCharge}];
+      const minV=Math.min(...allPts.map(h=>h.maxCharge).filter(v=>v>0))||0;
       const W=280,H=70,PAD=8;
-      const pts=history.map((h,i)=>{
-        const x=PAD+(i/(history.length-1))*(W-PAD*2);
+      const pts=allPts.map((h,i)=>{
+        const x=PAD+(i/(allPts.length-1||1))*(W-PAD*2);
         const y=H-PAD-((h.maxCharge-minV)/(maxV-minV||1))*(H-PAD*2);
         return{x,y,h};
       });
-      const polyline=pts.map(p=>`${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
+      const polyline=pts.length>1?pts.map(p=>`${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' '):'';
       const last=pts[pts.length-1];
-      const trend=vals[vals.length-1]>=vals[vals.length-2]?'var(--acc)':'#ff6b6b';
+      const prev=pts[pts.length-2];
+      const trend=!prev||last.h.maxCharge>=prev.h.maxCharge?'var(--acc)':'#ff6b6b';
       chartHTML=`<div class="prog-chart-wrap">
         <div class="prog-chart-title">📈 Charge max (kg)</div>
         <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:${H}px;overflow:visible">
-          <polyline points="${polyline}" fill="none" stroke="${trend}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+          ${polyline?`<polyline points="${polyline}" fill="none" stroke="${trend}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`:''}
           ${pts.map(p=>`<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="3" fill="${trend}"/>`).join('')}
-          <text x="${last.x.toFixed(1)}" y="${(last.y-8).toFixed(1)}" text-anchor="middle" font-size="10" fill="${trend}" font-family="Bebas Neue">${last.h.maxCharge}kg</text>
+          <text x="${last.x.toFixed(1)}" y="${Math.max(10,last.y-8).toFixed(1)}" text-anchor="middle" font-size="10" fill="${trend}" font-family="Bebas Neue">${last.h.maxCharge}kg</text>
         </svg>
-        <div class="chart-labels">${history.map(h=>`<span class="chart-label">${h.date.slice(5)}</span>`).join('')}</div>
+        <div class="chart-labels">${allPts.map(h=>`<span class="chart-label">${h.date==='Actuel'?'Actuel':h.date.slice(5)}</span>`).join('')}</div>
       </div>`;
     }
     const card=document.createElement('div');card.className='carnet-exo';
@@ -1961,66 +1999,69 @@ function renderDashboard() {
     return;
   }
 
-  // Stats globales
-  const totalSeances = sessions.length;
-  let totalSets = 0, totalTonnage = 0;
-  const muscleCount = {}, exoCount = {}, weekMap = {};
+  // Semaine courante lundi→dimanche
+  const now = new Date();
+  const dayOfWeek = now.getDay(); // 0=dim, 1=lun...
+  const diffToMon = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+  const monday = new Date(now); monday.setDate(now.getDate() + diffToMon); monday.setHours(0,0,0,0);
+  const sunday = new Date(monday); sunday.setDate(monday.getDate() + 6); sunday.setHours(23,59,59,999);
 
-  sessions.forEach(s => {
+  const sessWeek = sessions.filter(s => {
+    const d = new Date(s.date + 'T12:00:00');
+    return d >= monday && d <= sunday;
+  });
+
+  // Stats semaine
+  let weekSets = 0, weekTonnage = 0;
+  const weekMuscles = {}, weekExos = {};
+  sessWeek.forEach(s => {
     s.exercices.forEach(e => {
-      muscleCount[e.muscle] = (muscleCount[e.muscle]||0) + e.sets.length;
-      exoCount[e.nom] = (exoCount[e.nom]||0) + 1;
+      weekMuscles[e.muscle] = (weekMuscles[e.muscle]||0) + e.sets.length;
+      weekExos[e.nom] = (weekExos[e.nom]||0) + 1;
       e.sets.forEach(set => {
-        totalSets++;
-        totalTonnage += (parseFloat(set.reps)||0) * (parseFloat(set.charge)||0);
+        weekSets++;
+        weekTonnage += (parseFloat(set.reps)||0) * (parseFloat(set.charge)||0);
       });
     });
-    // Fréquence par semaine
-    const d = new Date(s.date + 'T12:00:00');
-    const mon = new Date(d); mon.setDate(d.getDate() - d.getDay() + 1);
-    const wk = mon.toISOString().slice(0,10);
-    weekMap[wk] = (weekMap[wk]||0) + 1;
   });
 
-  // Dernières 8 semaines de fréquence
-  const weeks = Object.keys(weekMap).sort().slice(-8);
-  const maxWk = Math.max(...weeks.map(w=>weekMap[w]),1);
-  const W = 280, H = 60;
-  const wkPts = weeks.map((w,i) => {
-    const x = (i/(Math.max(weeks.length-1,1)))*(W-20)+10;
-    const y = H - 8 - (weekMap[w]/maxWk)*(H-16);
-    return {x, y, w, v: weekMap[w]};
-  });
-  const wkPoly = wkPts.map(p=>`${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
+  // Jours de la semaine avec séances
+  const DAYS = ['Lun','Mar','Mer','Jeu','Ven','Sam','Dim'];
+  const daysDone = new Set(sessWeek.map(s => new Date(s.date+'T12:00:00').getDay()));
+  // Convertir dimanche(0) en index 6
+  const daysDoneAdj = new Set([...daysDone].map(d => d===0?6:d-1));
+  const todayIdx = dayOfWeek===0?6:dayOfWeek-1;
 
-  // Top muscles
-  const topMuscles = Object.entries(muscleCount).sort((a,b)=>b[1]-a[1]).slice(0,5);
+  // Top muscles semaine
+  const topMuscles = Object.entries(weekMuscles).sort((a,b)=>b[1]-a[1]).slice(0,6);
   const maxM = topMuscles[0]?.[1]||1;
 
-  // Top exercices
-  const topExos = Object.entries(exoCount).sort((a,b)=>b[1]-a[1]).slice(0,5);
-
-  // Séances des 30 derniers jours
-  const now = new Date();
-  const last30 = sessions.filter(s => (now - new Date(s.date+'T12:00:00')) < 30*864e5).length;
+  // Formatage semaine
+  const fmtDay = d => d.toLocaleDateString('fr-FR',{day:'numeric',month:'short'});
+  const weekLabel = `${fmtDay(monday)} – ${fmtDay(sunday)}`;
 
   el.innerHTML = `
-    <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px">
-      <div class="sum-card"><div class="sum-val">${totalSeances}</div><div class="sum-lbl">Séances totales</div></div>
-      <div class="sum-card"><div class="sum-val">${last30}</div><div class="sum-lbl">Sur 30 jours</div></div>
-      <div class="sum-card"><div class="sum-val">${totalSets}</div><div class="sum-lbl">Séries totales</div></div>
-      <div class="sum-card"><div class="sum-val" style="font-size:16px">${totalTonnage>0?Math.round(totalTonnage/1000).toLocaleString('fr')+' t':'—'}</div><div class="sum-lbl">Tonnage total</div></div>
+    <div class="bilan-header" style="margin-bottom:8px">📅 Semaine du ${weekLabel}</div>
+
+    <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:3px;margin-bottom:12px">
+      ${DAYS.map((d,i)=>{
+        const done=daysDoneAdj.has(i);
+        const today=i===todayIdx;
+        return `<div style="text-align:center">
+          <div style="font-size:9px;color:${today?'var(--acc)':'var(--muted)'};font-weight:${today?700:400};margin-bottom:3px">${d}</div>
+          <div style="width:100%;aspect-ratio:1;border-radius:6px;background:${done?'var(--acc)':today?'var(--surf2)':'var(--surf)'};border:1px solid ${today?'var(--acc)':'var(--border)'};display:flex;align-items:center;justify-content:center;font-size:10px">${done?'✓':''}</div>
+        </div>`;
+      }).join('')}
     </div>
 
-    <div class="bilan-header" style="margin-top:4px">📅 Fréquence hebdo</div>
-    ${weeks.length > 1 ? `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:${H}px;overflow:visible">
-      <polyline points="${wkPoly}" fill="none" stroke="var(--acc)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
-      ${wkPts.map(p=>`<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="3" fill="var(--acc)"/>
-        <text x="${p.x.toFixed(1)}" y="${(p.y-8).toFixed(1)}" text-anchor="middle" font-size="9" fill="var(--acc)" font-family="Bebas Neue">${p.v}</text>`).join('')}
-    </svg>
-    <div class="chart-labels" style="padding:0 4px">${weeks.map(w=>`<span class="chart-label">${w.slice(5)}</span>`).join('')}</div>` : '<div style="color:var(--muted);font-size:12px">Pas encore assez de données</div>'}
+    <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:12px">
+      <div class="sum-card"><div class="sum-val">${sessWeek.length}</div><div class="sum-lbl">Séances cette semaine</div></div>
+      <div class="sum-card"><div class="sum-val">${weekSets}</div><div class="sum-lbl">Séries cette semaine</div></div>
+      <div class="sum-card" style="grid-column:span 2"><div class="sum-val" style="font-size:18px">${weekTonnage>0?Math.round(weekTonnage).toLocaleString('fr')+' kg':'—'}</div><div class="sum-lbl">Tonnage total cette semaine</div></div>
+    </div>
 
-    <div class="bilan-header" style="margin-top:4px">💪 Muscles les plus travaillés</div>
+    ${topMuscles.length ? `
+    <div class="bilan-header" style="margin-bottom:8px">💪 Volume par muscle</div>
     <div style="display:flex;flex-direction:column;gap:6px">
       ${topMuscles.map(([m,v])=>`
         <div style="display:flex;align-items:center;gap:8px">
@@ -2030,17 +2071,23 @@ function renderDashboard() {
           </div>
           <span style="font-size:11px;color:var(--muted);width:40px;text-align:right">${v} sér</span>
         </div>`).join('')}
-    </div>
+    </div>` : `<div style="color:var(--muted);font-size:13px;text-align:center;padding:20px 0">Aucune séance cette semaine encore 💪</div>`}
 
-    <div class="bilan-header" style="margin-top:4px">🏆 Exercices les plus fréquents</div>
-    <div style="display:flex;flex-direction:column;gap:4px">
-      ${topExos.map(([nom,v],i)=>`
-        <div style="display:flex;align-items:center;gap:8px;font-size:12px">
-          <span style="color:var(--acc);font-family:'Bebas Neue';font-size:15px;width:18px">${i+1}</span>
-          <span style="flex:1;color:var(--text)">${esc(nom)}</span>
-          <span style="color:var(--muted)">${v}×</span>
-        </div>`).join('')}
-    </div>
+    ${sessWeek.length ? `
+    <div class="bilan-header" style="margin:12px 0 8px">📋 Séances de la semaine</div>
+    <div style="display:flex;flex-direction:column;gap:6px">
+      ${sessWeek.sort((a,b)=>a.date.localeCompare(b.date)).map(s=>{
+        const d=new Date(s.date+'T12:00:00');
+        const dayN=DAYS[d.getDay()===0?6:d.getDay()-1];
+        const sets=s.exercices.reduce((t,e)=>t+e.sets.length,0);
+        const ton=s.exercices.reduce((t,e)=>t+e.sets.reduce((tt,set)=>tt+(parseFloat(set.reps)||0)*(parseFloat(set.charge)||0),0),0);
+        return `<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--surf2);border-radius:8px;border:1px solid var(--border)">
+          <span style="font-size:11px;font-weight:700;color:var(--acc);width:28px">${dayN}</span>
+          <span style="flex:1;font-size:13px;color:var(--text)">${esc(s.name)}</span>
+          <span style="font-size:11px;color:var(--muted)">${sets} sér${ton>0?' · '+Math.round(ton)+'kg':''}</span>
+        </div>`;
+      }).join('')}
+    </div>` : ''}
   `;
 }
 
